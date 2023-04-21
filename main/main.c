@@ -219,5 +219,5 @@ void main()
     // tcpip_init(NULL, NULL);
     // puts("[OS] proc_main_entry task...\r\n");
     // // xTaskCreate(proc_main_entry, (char*)"main_entry", 1024, NULL, 15, NULL); //关闭WIFI
-
+    xTaskCreate(device_HDMI_ctlr, "KVM task", 1024*3, NULL, 10, NULL);
 }
