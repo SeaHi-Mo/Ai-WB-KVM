@@ -20,7 +20,7 @@
 #include "hosal_dac.h"
 #include "hosal_gpio.h"
 #include "easyflash_common.h"
-
+#include <limits.h>
 #define DAC_KEY "HDMIDAC"
 
 typedef enum {
@@ -29,6 +29,8 @@ typedef enum {
     CHANNEL_BIT_3,
 }channel_bit_t;
 
+static TaskHandle_t sub_ctlr_task;
+
 static hosal_dac_dev_t HDMI_dac = {
     .config = {
         .dma_enable = false,
@@ -36,7 +38,7 @@ static hosal_dac_dev_t HDMI_dac = {
         .pin = DEVICE_HDMI_ADC_PIN,
     },
     .cb = NULL,
-    .port = 0,
+    .port = 0
 };
 
 static hosal_gpio_dev_t device_channel1 = {
@@ -64,30 +66,31 @@ static void device_adc_init(void);
 void device_HDMI_ctlr(void* arg)
 {
     easyflash_init();
-    device_key_init();
     device_usbHub_pin_init();
+    device_key_init();
     device_adc_init();
+    blog_info("key checking ......");
     while (1) {
         //进行按键检测
-        if (!bl_gpio_input_get_value(DEVICE_CHANNEL1_IN_PIN)) {
-            while (!bl_gpio_input_get_value(DEVICE_CHANNEL1_IN_PIN)) vTaskDelay(50/portTICK_PERIOD_MS);
+        if (!bl_gpio_input_get_value(DEVICE_KEY_CHANNEL1_PIN)) {
+            while (!bl_gpio_input_get_value(DEVICE_KEY_CHANNEL1_PIN)) vTaskDelay(50/portTICK_PERIOD_MS);
             hosal_dac_set_value(&HDMI_dac, DEVICE_CHANNEL1_VALUE);
             ef_set_u32(DAC_KEY, DEVICE_CHANNEL1_VALUE);
-            blog_info("HDMI channel is 1");
+            blog_info("HDMI channel is 1, adc:%d", hosal_dac_get_value(&HDMI_dac));
         }
 
-        if (!bl_gpio_input_get_value(DEVICE_CHANNEL2_IN_PIN)) {
-            while (!bl_gpio_input_get_value(DEVICE_CHANNEL2_IN_PIN)) vTaskDelay(50/portTICK_PERIOD_MS);
+        if (!bl_gpio_input_get_value(DEVICE_KEY_CHANNEL2_PIN)) {
+            while (!bl_gpio_input_get_value(DEVICE_KEY_CHANNEL2_PIN)) vTaskDelay(50/portTICK_PERIOD_MS);
             hosal_dac_set_value(&HDMI_dac, DEVICE_CHANNEL2_VALUE);
             ef_set_u32(DAC_KEY, DEVICE_CHANNEL2_VALUE);
-            blog_info("HDMI channel is 2");
+            blog_info("HDMI channel is 2,adc:%d", hosal_dac_get_value(&HDMI_dac));
         }
 
-        if (!bl_gpio_input_get_value(DEVICE_CHANNEL3_IN_PIN)) {
-            while (!bl_gpio_input_get_value(DEVICE_CHANNEL3_IN_PIN)) vTaskDelay(50/portTICK_PERIOD_MS);
+        if (!bl_gpio_input_get_value(DEVICE_KEY_CHANNEL3_PIN)) {
+            while (!bl_gpio_input_get_value(DEVICE_KEY_CHANNEL3_PIN)) vTaskDelay(50/portTICK_PERIOD_MS);
             hosal_dac_set_value(&HDMI_dac, DEVICE_CHANNEL3_VALUE);
             ef_set_u32(DAC_KEY, DEVICE_CHANNEL3_VALUE);
-            blog_info("HDMI channel is 3");
+            blog_info("HDMI channel is 3,adc:%d", hosal_dac_get_value(&HDMI_dac));
         }
 
         vTaskDelay(20/portTICK_PERIOD_MS);
@@ -100,11 +103,14 @@ void device_HDMI_ctlr(void* arg)
  */
 static void device_channel1_irq(void* arg)
 {
-    bl_gpio_output_set(DEVICE_USB_SWITCH_PIN, 1);//先关闭USB HUB
-    //切换设备
-    bl_gpio_output_set(DEVICE_USB_IN0_PIN, 0);
-    bl_gpio_output_set(DEVICE_USB_IN1_PIN, 0);
-    bl_gpio_output_set(DEVICE_USB_SWITCH_PIN, 0);//打开USB HUB
+    blog_info("HDMI channel 1 ");
+    // bl_gpio_output_set(DEVICE_USB_SWITCH_PIN, 1);//先关闭USB HUB
+    // //切换设备
+    // bl_gpio_output_set(DEVICE_USB_IN0_PIN, 0);
+    // bl_gpio_output_set(DEVICE_USB_IN1_PIN, 0);
+
+    // bl_gpio_output_set(DEVICE_USB_SWITCH_PIN, 0);//打开USB HUB
+    xTaskNotifyFromISR(sub_ctlr_task, CHANNEL_BIT_1, eSetBits, NULL);
 }
 /**
  * @brief  HDMI 通道2 识别中断
@@ -113,11 +119,15 @@ static void device_channel1_irq(void* arg)
  */
 static void device_channel2_irq(void* arg)
 {
-    bl_gpio_output_set(DEVICE_USB_SWITCH_PIN, 1); //先关闭USB HUB
-    //切换设备
-    bl_gpio_output_set(DEVICE_USB_IN0_PIN, 0);
-    bl_gpio_output_set(DEVICE_USB_IN1_PIN, 1);
-    bl_gpio_output_set(DEVICE_USB_SWITCH_PIN, 0);//打开USB HUB
+    blog_info("HDMI channel 2 ");
+    // bl_gpio_output_set(DEVICE_USB_SWITCH_PIN, 1); //先关闭USB HUB
+    // //切换设备
+    // bl_gpio_output_set(DEVICE_USB_IN0_PIN, 0);
+    // bl_gpio_output_set(DEVICE_USB_IN1_PIN, 1);
+
+    // bl_gpio_output_set(DEVICE_USB_SWITCH_PIN, 0);//打开USB HUB
+
+    xTaskNotifyFromISR(sub_ctlr_task, CHANNEL_BIT_2, eSetBits, NULL);
 }
 /**
  * @brief  HDMI 通道3 识别中断
@@ -126,11 +136,63 @@ static void device_channel2_irq(void* arg)
  */
 static void device_channel3_irq(void* arg)
 {
-    bl_gpio_output_set(DEVICE_USB_SWITCH_PIN, 1);//先关闭USB HUB
-    //切换设备
-    bl_gpio_output_set(DEVICE_USB_IN0_PIN, 1);
-    bl_gpio_output_set(DEVICE_USB_IN1_PIN, 0);
-    bl_gpio_output_set(DEVICE_USB_SWITCH_PIN, 0);//打开USB HUB
+    blog_info("HDMI channel 3 ");
+
+    // bl_gpio_output_set(DEVICE_USB_SWITCH_PIN, 1);//先关闭USB HUB
+    // //切换设备
+    // bl_gpio_output_set(DEVICE_USB_IN0_PIN, 1);
+    // bl_gpio_output_set(DEVICE_USB_IN1_PIN, 0);
+
+    // bl_gpio_output_set(DEVICE_USB_SWITCH_PIN, 0);//先关闭USB HUB
+
+    xTaskNotifyFromISR(sub_ctlr_task, CHANNEL_BIT_3, eSetBits, NULL);
+}
+
+static void usb_out_en_task(void* arg)
+{
+    channel_bit_t channel_bit;
+    while (1) {
+        xTaskNotifyWait(ULONG_MAX, 0, &channel_bit, portMAX_DELAY);
+        blog_info("get notify :%d", channel_bit);
+        switch (channel_bit) {
+            case CHANNEL_BIT_1:
+                blog_info("set USB for channel1 device");
+                bl_gpio_output_set(DEVICE_USB_IN_EN, 1); //关闭输入
+                bl_gpio_output_set(DEVICE_USB_SWITCH_PIN, 1);//先关闭USB HUB
+                //切换设备
+                bl_gpio_output_set(DEVICE_USB_IN0_PIN, 0);
+                bl_gpio_output_set(DEVICE_USB_IN1_PIN, 0);
+                bl_gpio_output_set(DEVICE_USB_IN_EN, 0); //使能USB 输入
+                vTaskDelay(500/portTICK_PERIOD_MS);
+                bl_gpio_output_set(DEVICE_USB_SWITCH_PIN, 0);//打开USB HUB
+                break;
+            case CHANNEL_BIT_2:
+                blog_info("set USB for channel2 device");
+                bl_gpio_output_set(DEVICE_USB_IN_EN, 1); //关闭输入
+                bl_gpio_output_set(DEVICE_USB_SWITCH_PIN, 1); //先关闭USB HUB
+                //切换设备
+                bl_gpio_output_set(DEVICE_USB_IN0_PIN, 1);
+                bl_gpio_output_set(DEVICE_USB_IN1_PIN, 0);
+                bl_gpio_output_set(DEVICE_USB_IN_EN, 0); //使能USB 输入
+                vTaskDelay(500/portTICK_PERIOD_MS);
+                bl_gpio_output_set(DEVICE_USB_SWITCH_PIN, 0);//打开USB HUB
+
+                bl_gpio_output_set(DEVICE_USB_IN_EN, 0); //使能USB 输入
+                break;
+            case CHANNEL_BIT_3:
+                blog_info("set USB for channel3 device");
+                bl_gpio_output_set(DEVICE_USB_IN_EN, 1); //关闭输入
+                bl_gpio_output_set(DEVICE_USB_SWITCH_PIN, 1);//先关闭USB HUB
+                //切换设备
+                bl_gpio_output_set(DEVICE_USB_IN0_PIN, 0);
+                bl_gpio_output_set(DEVICE_USB_IN1_PIN, 1);
+                bl_gpio_output_set(DEVICE_USB_IN_EN, 0); //使能USB 输入
+                vTaskDelay(500/portTICK_PERIOD_MS);
+                bl_gpio_output_set(DEVICE_USB_SWITCH_PIN, 0);//先关闭USB HUB
+
+                break;
+        }
+    }
 }
 /**
  * @brief
@@ -138,16 +200,61 @@ static void device_channel3_irq(void* arg)
  */
 static void device_key_init(void)
 {
-    bl_gpio_enable_output(DEVICE_KEY_CHANNEL1_PIN, true, false);
-    bl_gpio_enable_output(DEVICE_KEY_CHANNEL2_PIN, true, false);
-    bl_gpio_enable_output(DEVICE_KEY_CHANNEL3_PIN, true, false);
-    hosal_gpio_init(&device_channel1);
-    hosal_gpio_init(&device_channel2);
-    hosal_gpio_init(&device_channel3);
+    int ret = 0;
+    ret = bl_gpio_enable_input(DEVICE_KEY_CHANNEL1_PIN, true, false);
+    if (!ret) {
+        blog_info("key pin%d init success", DEVICE_KEY_CHANNEL1_PIN);
+    }
+    else blog_error("key pin%d init fail", DEVICE_KEY_CHANNEL1_PIN);
 
-    hosal_gpio_irq_set(&device_channel1, HOSAL_IRQ_TRIG_POS_PULSE, device_channel1_irq, NULL);
-    hosal_gpio_irq_set(&device_channel2, HOSAL_IRQ_TRIG_POS_PULSE, device_channel2_irq, NULL);
-    hosal_gpio_irq_set(&device_channel3, HOSAL_IRQ_TRIG_POS_PULSE, device_channel3_irq, NULL);
+    ret = bl_gpio_enable_input(DEVICE_KEY_CHANNEL2_PIN, true, false);
+    if (!ret) {
+        blog_info("key pin%d init success", DEVICE_KEY_CHANNEL2_PIN);
+    }
+    else blog_error("key pin%d init fail", DEVICE_KEY_CHANNEL2_PIN);
+
+    ret = bl_gpio_enable_input(DEVICE_KEY_CHANNEL3_PIN, true, false);
+    if (!ret) {
+        blog_info("key pin%d init success", DEVICE_KEY_CHANNEL3_PIN);
+    }
+    else blog_error("key pin%d init fail", DEVICE_KEY_CHANNEL3_PIN);
+
+    ret = hosal_gpio_init(&device_channel1);
+    if (!ret) {
+        blog_info("key pin%d init success", device_channel1.port);
+    }
+    else blog_error("key pin%d init fail", device_channel1.port);
+    ret = hosal_gpio_init(&device_channel2);
+    if (!ret) {
+        blog_info("key pin%d init success", device_channel2.port);
+    }
+    else blog_error("key pin%d init fail", device_channel2.port);
+
+    ret = hosal_gpio_init(&device_channel3);
+    if (!ret) {
+        blog_info("key pin%d init success", device_channel3.port);
+    }
+    else blog_error("key pin%d init fail", device_channel3.port);
+
+    ret = hosal_gpio_irq_set(&device_channel1, HOSAL_IRQ_TRIG_POS_PULSE, device_channel1_irq, NULL);
+    if (!ret) {
+        blog_info("key pin%d set irq success", device_channel1.port);
+    }
+    else blog_error("key pin%d set irq fail", device_channel1.port);
+
+    ret = hosal_gpio_irq_set(&device_channel2, HOSAL_IRQ_TRIG_POS_PULSE, device_channel2_irq, NULL);
+    if (!ret) {
+        blog_info("key pin%d set irq success", device_channel2.port);
+    }
+    else blog_error("key pin%d set irq fail", device_channel2.port);
+    ret = hosal_gpio_irq_set(&device_channel3, HOSAL_IRQ_TRIG_POS_PULSE, device_channel3_irq, NULL);
+    if (!ret) {
+        blog_info("key pin%d set irq success", device_channel3.port);
+    }
+    else blog_error("key pin%d set irq fail", device_channel3.port);
+
+    xTaskCreate(usb_out_en_task, "usb out", 1024, NULL, 3, &sub_ctlr_task);
+
 }
 /**
  * @brief
@@ -158,7 +265,8 @@ static void device_usbHub_pin_init(void)
     bl_gpio_enable_output(DEVICE_USB_SWITCH_PIN, true, false);
     bl_gpio_enable_output(DEVICE_USB_IN0_PIN, true, false);
     bl_gpio_enable_output(DEVICE_USB_IN1_PIN, true, false);
-
+    bl_gpio_enable_output(DEVICE_USB_IN_EN, true, false);
+    bl_gpio_output_set(DEVICE_USB_IN_EN, 1);//关闭输入
 }
 /**
  * @brief
@@ -178,6 +286,7 @@ static void device_adc_init(void)
     //上电读取上次设置的值，并设置它
     if (ef_get_u32(DAC_KEY, &dac_value)) {
         ret = hosal_dac_set_value(&HDMI_dac, dac_value);
+        blog_info("set dac value:%d", dac_value);
     }
     else {
         ret = hosal_dac_set_value(&HDMI_dac, DEVICE_CHANNEL1_VALUE);//输出0.15V 150 mV
